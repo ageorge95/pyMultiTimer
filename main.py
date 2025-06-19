@@ -3,10 +3,13 @@ import json
 import os
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLabel,
-    QPushButton, QHBoxLayout, QProgressBar, QSpinBox, QLineEdit, QFrame
+    QPushButton, QHBoxLayout, QProgressBar, QSpinBox,
+    QLineEdit, QListWidget, QListWidgetItem, QFrame,
+    QDialog, QFormLayout, QDialogButtonBox
 )
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QIcon
+from ag95 import format_from_seconds
 
 SAVE_FILE = "timers.json"
 
@@ -17,38 +20,37 @@ def get_running_path(relative_path):
         return relative_path
 
 class TimerWidget(QWidget):
-    def __init__(self, name, duration_seconds, remove_callback, parent=None):
+    def __init__(self, name, duration_seconds, remove_callback, save_callback, parent=None):
         super().__init__(parent)
         self.name = name
         self.duration = duration_seconds
         self.remaining = duration_seconds
         self.remove_callback = remove_callback
+        self.save_callback = save_callback
         self.is_paused = False
 
         self.layout = QVBoxLayout()
         self.name_label = QLabel(f"Timer: {self.name}")
-        self.label = QLabel(f"Time remaining: {self.remaining}s")
+        self.label = QLabel(f"Time remaining: {format_from_seconds(self.remaining)} || {format_from_seconds(self.duration)}")
         self.progress = QProgressBar()
         self.progress.setRange(0, self.duration)
         self.progress.setValue(self.duration)
 
+        # Control buttons
         self.start_button = QPushButton("Start")
         self.start_button.clicked.connect(self.start_timer)
-
         self.pause_button = QPushButton("Pause")
         self.pause_button.clicked.connect(self.pause_timer)
-
         self.reset_button = QPushButton("Reset")
         self.reset_button.clicked.connect(self.reset_timer)
-
+        self.edit_button = QPushButton("Edit")
+        self.edit_button.clicked.connect(self.edit_timer)
         self.delete_button = QPushButton("Delete")
         self.delete_button.clicked.connect(self.delete_timer)
 
         button_layout = QHBoxLayout()
-        button_layout.addWidget(self.start_button)
-        button_layout.addWidget(self.pause_button)
-        button_layout.addWidget(self.reset_button)
-        button_layout.addWidget(self.delete_button)
+        for btn in (self.start_button, self.pause_button, self.reset_button, self.edit_button, self.delete_button):
+            button_layout.addWidget(btn)
 
         self.layout.addWidget(self.name_label)
         self.layout.addWidget(self.label)
@@ -56,46 +58,70 @@ class TimerWidget(QWidget):
         self.layout.addLayout(button_layout)
         self.setLayout(self.layout)
 
+        # timers
         self.timer = QTimer()
-        self.timer.setInterval(1000)  # 1 second
+        self.timer.setInterval(1000)
         self.timer.timeout.connect(self.update_timer)
-
         self.flash_timer = QTimer()
         self.flash_timer.setInterval(500)
         self.flash_timer.timeout.connect(self.flash_background)
         self.flash_state = False
+        self.update_button_styles()
 
     def start_timer(self):
         if self.remaining <= 0:
             self.remaining = self.duration
         self.progress.setValue(self.remaining)
-        self.label.setText(f"Time remaining: {self.remaining}s")
+        self.label.setText(f"Time remaining: {format_from_seconds(self.remaining)} || {format_from_seconds(self.duration)}")
         self.is_paused = False
         self.timer.start()
+        self.update_button_styles()
         self.stop_flash()
 
     def pause_timer(self):
         if self.timer.isActive():
             self.timer.stop()
             self.is_paused = True
+            self.update_button_styles()
 
     def reset_timer(self):
         self.timer.stop()
         self.remaining = self.duration
+        self.progress.setRange(0, self.duration)
         self.progress.setValue(self.remaining)
-        self.label.setText(f"Time remaining: {self.remaining}s")
+        self.label.setText(f"Time remaining: {format_from_seconds(self.remaining)} || {format_from_seconds(self.duration)}")
         self.is_paused = False
+        self.update_button_styles()
         self.stop_flash()
 
     def update_timer(self):
         self.remaining -= 1
         self.progress.setValue(self.remaining)
-        self.label.setText(f"Time remaining: {self.remaining}s")
-
+        self.label.setText(f"Time remaining: {format_from_seconds(self.remaining)} || {format_from_seconds(self.duration)}")
         if self.remaining <= 0:
             self.timer.stop()
             self.label.setText("Time's up!")
             self.start_flash()
+
+    def update_button_styles(self):
+        print('update called')
+        if self.timer.isActive() and not self.is_paused:
+            # Running: Start gray‑out, Pause green
+            self.start_button.setEnabled(False)
+            self.start_button.setStyleSheet("background-color: lightgreen;")
+            self.pause_button.setEnabled(True)
+            self.pause_button.setStyleSheet("background-color: lightgray;")
+        elif self.is_paused:
+            # Paused: Start green, Pause gray
+            self.start_button.setEnabled(True)
+            self.start_button.setStyleSheet("background-color: lightgray;")
+            self.pause_button.setEnabled(False)
+            self.pause_button.setStyleSheet("background-color: lightyellow;")
+        else:
+            # Stopped / reset: both neutral
+            for btn in (self.start_button, self.pause_button):
+                btn.setEnabled(True)
+                btn.setStyleSheet("")
 
     def start_flash(self):
         self.flash_state = False
@@ -106,10 +132,7 @@ class TimerWidget(QWidget):
         self.setStyleSheet("")
 
     def flash_background(self):
-        if self.flash_state:
-            self.setStyleSheet("background-color: white;")
-        else:
-            self.setStyleSheet("background-color: red;")
+        self.setStyleSheet("background-color: red;" if not self.flash_state else "background-color: white;")
         self.flash_state = not self.flash_state
 
     def delete_timer(self):
@@ -121,109 +144,105 @@ class TimerWidget(QWidget):
     def to_dict(self):
         return {"name": self.name, "duration": self.duration}
 
+    def edit_timer(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Edit Timer")
+        form = QFormLayout(dialog)
+        name_edit = QLineEdit(self.name)
+        h_spin = QSpinBox(); h_spin.setRange(0, 23); h_spin.setValue(self.duration // 3600)
+        m_spin = QSpinBox(); m_spin.setRange(0, 59); m_spin.setValue((self.duration % 3600) // 60)
+        s_spin = QSpinBox(); s_spin.setRange(0, 59); s_spin.setValue(self.duration % 60)
+        form.addRow("Name:", name_edit)
+        form.addRow("Hours:", h_spin)
+        form.addRow("Minutes:", m_spin)
+        form.addRow("Seconds:", s_spin)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addWidget(buttons)
+
+        if dialog.exec() == QDialog.Accepted:
+            # update timer
+            self.name = name_edit.text().strip() or self.name
+            self.duration = h_spin.value() * 3600 + m_spin.value() * 60 + s_spin.value()
+            self.remaining = self.duration
+            self.name_label.setText(f"Timer: {self.name}")
+            self.progress.setRange(0, self.duration)
+            self.progress.setValue(self.duration)
+            self.label.setText(f"Time remaining: {format_from_seconds(self.remaining)} || {format_from_seconds(self.duration)}")
+            self.save_callback()
 
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("pyMulti-Timer v" + open(get_running_path('version.txt')).read())
         self.setWindowIcon(QIcon(get_running_path('icon.ico')))
+        self.layout = QVBoxLayout(self)
 
-        self.layout = QVBoxLayout()
+        # input fields
+        self.name_input = QLineEdit(); self.name_input.setPlaceholderText("Enter timer name")
+        self.hours_input = QSpinBox(); self.hours_input.setRange(0,23); self.hours_input.setPrefix("H: ")
+        self.minutes_input = QSpinBox(); self.minutes_input.setRange(0,59); self.minutes_input.setPrefix("M: ")
+        self.seconds_input = QSpinBox(); self.seconds_input.setRange(0,59); self.seconds_input.setPrefix("S: ")
+        self.add_button = QPushButton("Add Timer"); self.add_button.clicked.connect(self.add_timer)
 
-        # Timer name input
-        self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("Enter timer name")
-        self.layout.addWidget(QLabel("Timer name:"))
-        self.layout.addWidget(self.name_input)
-
-        # Timer duration selection (H:M:S)
+        self.layout.addWidget(QLabel("Timer name:")); self.layout.addWidget(self.name_input)
         self.layout.addWidget(QLabel("Select timer duration (H:M:S):"))
-        self.time_layout = QHBoxLayout()
+        tlay = QHBoxLayout(); tlay.addWidget(self.hours_input); tlay.addWidget(self.minutes_input); tlay.addWidget(self.seconds_input)
+        self.layout.addLayout(tlay); self.layout.addWidget(self.add_button)
 
-        self.hours_input = QSpinBox()
-        self.hours_input.setRange(0, 23)
-        self.hours_input.setPrefix("H: ")
-        self.time_layout.addWidget(self.hours_input)
+        line = QFrame(); line.setFrameShape(QFrame.HLine); self.layout.addWidget(line)
 
-        self.minutes_input = QSpinBox()
-        self.minutes_input.setRange(0, 59)
-        self.minutes_input.setPrefix("M: ")
-        self.time_layout.addWidget(self.minutes_input)
+        # use QListWidget for drag & drop
+        self.list = QListWidget()
+        self.list.setDragDropMode(QListWidget.InternalMove)
+        self.list.model().rowsMoved.connect(self.save_timers)
+        self.layout.addWidget(self.list)
 
-        self.seconds_input = QSpinBox()
-        self.seconds_input.setRange(0, 59)
-        self.seconds_input.setPrefix("S: ")
-        self.time_layout.addWidget(self.seconds_input)
-
-        self.layout.addLayout(self.time_layout)
-
-        # Add timer button
-        self.add_timer_button = QPushButton("Add Timer")
-        self.add_timer_button.clicked.connect(self.add_timer)
-        self.layout.addWidget(self.add_timer_button)
-
-        # Add a horizontal line as delimiter
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setFrameShadow(QFrame.Sunken)
-        self.layout.addWidget(line)
-
-        self.timers_layout = QVBoxLayout()
-        self.layout.addLayout(self.timers_layout)
-
-        self.setLayout(self.layout)
-
-        self.timers = []
         self.load_timers()
 
     def add_timer(self):
-        name = self.name_input.text().strip()
-        if not name:
-            name = f"Timer {len(self.timers) + 1}"
-
-        hours = self.hours_input.value()
-        minutes = self.minutes_input.value()
-        seconds = self.seconds_input.value()
-        duration = hours * 3600 + minutes * 60 + seconds
-
-        if duration <= 0:
+        name = self.name_input.text().strip() or f"Timer {self.list.count()+1}"
+        secs = self.hours_input.value()*3600 + self.minutes_input.value()*60 + self.seconds_input.value()
+        if secs <= 0:
             return
-
-        timer_widget = TimerWidget(name, duration, self.remove_timer)
-        self.timers_layout.addWidget(timer_widget)
-        self.timers.append(timer_widget)
+        widget = TimerWidget(name, secs, remove_callback=self.on_delete, save_callback=self.save_timers)
+        item = QListWidgetItem(); item.setSizeHint(widget.sizeHint())
+        self.list.addItem(item); self.list.setItemWidget(item, widget)
         self.save_timers()
 
-    def remove_timer(self, timer_widget):
-        if timer_widget in self.timers:
-            self.timers.remove(timer_widget)
-            self.save_timers()
+    def on_delete(self, timer_widget):
+        for i in range(self.list.count()):
+            item = self.list.item(i)
+            if self.list.itemWidget(item) is timer_widget:
+                self.list.takeItem(i)
+                break
+        self.save_timers()
 
-    def save_timers(self):
-        data = [timer.to_dict() for timer in self.timers]
+    def save_timers(self, *args):
+        data = []
+        for i in range(self.list.count()):
+            w = self.list.itemWidget(self.list.item(i))
+            data.append(w.to_dict())
         with open(SAVE_FILE, 'w') as f:
-            json.dump(data, f)
+            json.dump(data, f, indent=2)
 
     def load_timers(self):
-        if os.path.exists(SAVE_FILE):
-            with open(SAVE_FILE, 'r') as f:
-                try:
-                    data = json.load(f)
-                    for entry in data:
-                        timer_widget = TimerWidget(entry["name"], entry["duration"], self.remove_timer)
-                        self.timers_layout.addWidget(timer_widget)
-                        self.timers.append(timer_widget)
-                except json.JSONDecodeError:
-                    pass
+        if not os.path.exists(SAVE_FILE):
+            return
+        try:
+            with open(SAVE_FILE) as f:
+                data = json.load(f)
+        except json.JSONDecodeError:
+            return
+        for entry in data:
+            w = TimerWidget(entry['name'], entry['duration'], remove_callback=self.on_delete, save_callback=self.save_timers)
+            item = QListWidgetItem(); item.setSizeHint(w.sizeHint())
+            self.list.addItem(item); self.list.setItemWidget(item, w)
 
-    def closeEvent(self, event):
-        self.save_timers()
-        super().closeEvent(event)
-
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     app = QApplication(sys.argv)
-    window = MainWindow()
-    window.resize(300, 600)
-    window.show()
+    win = MainWindow()
+    win.resize(500, 600)
+    win.show()
     sys.exit(app.exec())
