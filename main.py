@@ -1,6 +1,7 @@
 import sys
 import json
 import os
+import ctypes
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLabel,
     QPushButton, QHBoxLayout, QProgressBar, QSpinBox,
@@ -13,11 +14,23 @@ from ag95 import format_from_seconds
 
 SAVE_FILE = "timers.json"
 
+APP_ID = 'AG95.pyMultiTimer'
+ICON_FILE = 'icon.ico'
+
 def get_running_path(relative_path):
-    if '_internal' in os.listdir():
-        return os.path.join('_internal', relative_path)
-    else:
-        return relative_path
+    """Return a bundled file's path in both source and PyInstaller builds."""
+    base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_path, relative_path)
+
+
+def set_windows_app_id():
+    """Give the app its own Windows taskbar identity."""
+    if sys.platform != 'win32':
+        return
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+    except (AttributeError, OSError):
+        pass
 
 class TimerWidget(QWidget):
     def __init__(self, name, duration_seconds, remove_callback, save_callback, parent=None):
@@ -176,7 +189,7 @@ class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("pyMulti-Timer v" + open(get_running_path('version.txt')).read())
-        self.setWindowIcon(QIcon(get_running_path('icon.ico')))
+        self.setWindowIcon(QIcon(get_running_path(ICON_FILE)))
         self.layout = QVBoxLayout(self)
 
         # input fields
@@ -241,7 +254,9 @@ class MainWindow(QWidget):
             self.list.addItem(item); self.list.setItemWidget(item, w)
 
 if __name__ == '__main__':
+    set_windows_app_id()
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon(get_running_path(ICON_FILE)))
     win = MainWindow()
     win.resize(500, 600)
     win.show()
